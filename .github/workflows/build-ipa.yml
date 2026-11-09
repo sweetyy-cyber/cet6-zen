@@ -1,0 +1,67 @@
+name: Build CET-6 Zen iPhone IPA
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-ios:
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Build the unsigned iPhone app
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p output
+          npm ci
+          npm install --no-save --package-lock=false @capacitor/core@7 @capacitor/cli@7 @capacitor/ios@7
+          npm run build
+          cat > capacitor.config.json <<'JSON'
+          {
+            "appId": "app.cet6zen.reader",
+            "appName": "CET-6 Zen",
+            "webDir": "dist",
+            "server": { "iosScheme": "capacitor", "hostname": "localhost" },
+            "ios": { "contentInset": "automatic" }
+          }
+          JSON
+          npx cap add ios
+          npx cap sync ios
+          xcodebuild \
+            -project ios/App/App.xcodeproj \
+            -scheme App \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$PWD/ios-derived" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            build 2>&1 | tee output/build.log
+          test -f ios-derived/Build/Products/Release-iphoneos/App.app/Info.plist
+          mkdir -p output/Payload
+          cp -R ios-derived/Build/Products/Release-iphoneos/App.app output/Payload/App.app
+          (cd output && /usr/bin/zip -q -r CET6-Zen-unsigned.ipa Payload)
+          rm -rf output/Payload
+          unzip -tq output/CET6-Zen-unsigned.ipa
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: CET6-Zen-unsigned
+          path: |
+            output/CET6-Zen-unsigned.ipa
+            output/build.log
+          if-no-files-found: error
+          retention-days: 14
